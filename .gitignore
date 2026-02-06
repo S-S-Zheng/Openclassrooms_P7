@@ -45,3 +45,4 @@ db_connection_test.py
 htmlcov
 .coverage
 datas/
+miscellanous/

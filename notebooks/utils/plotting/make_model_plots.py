@@ -270,8 +270,8 @@ def plot_clustering(
         )
         
         ax.set_title(f"{reduction_name} - {label_name.replace('_', ' ').title()}")
-        ax.set_xlabel("Comp. 1")
-        ax.set_ylabel("Comp. 2")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
 
     plt.tight_layout()

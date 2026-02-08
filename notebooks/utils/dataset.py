@@ -108,7 +108,8 @@ class ImagesToDataset(Dataset):
         transform: Pipeline de transformations (ex: BaseTransform.preproc())
     """
     def __init__(
-        self, file_paths:List[Path], 
+        self, 
+        file_paths:List[Path], 
         labels:Sequence[Union[str,int]], # Sequence est immutable != List qui l'est
         transform:Optional[transforms.Compose]=None
     ):
@@ -119,6 +120,11 @@ class ImagesToDataset(Dataset):
     def __len__(self)->int:
         """
         Nombre total d'images.
+        
+        Args:
+            file_paths: Liste des chemins vers les fichiers images.
+            labels: Liste des classes (index ou noms).
+            transform: Pipeline de transformations (ex: BaseTransform.preproc())
         """
         return len(self.file_paths)
 

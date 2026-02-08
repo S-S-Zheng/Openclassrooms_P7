@@ -6,89 +6,326 @@ Boucle d'entraînement, évaluation et génération de pseudo-labels.
 import torch
 import torch.nn as nn
 import numpy as np
+import yaml
+from pathlib import Path
+import pandas as pd
 # Affiche une barre de progression pendant l'entraînement.
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from sklearn.metrics import classification_report, f1_score
 
+from sklearn.metrics import (
+    precision_score,recall_score,fbeta_score
+)
 
+from typing import Dict,List, Tuple,Any, Optional
 
 
 
 class Trainer:
     """
-    Gère le cycle de vie de l'entraînement (Supervisé & Pseudo-labeling).
+    Gère le cycle de vie de l'entraînement, l'évaluation et la génération de pseudo-labels 
+    pour un modèle de classification binaire.
+    
+    REMARQUE: les extensions Pytorch sont nombreuses ici donc petit rappel:
+        - .item(): Extrait la valeur d'un tenseur ne contenant qu'un seul chiffre (ex: la loss)
+        - .cpu(): Déplace les données GPU -> CPU OBLIGATOIRE pour évaluer/afficher/stocker
+        - .numpy(): Transforme un tenseur en tableau, c'est le complément de cpu()
+        - .flatten(): pour aplatir les dimensions
+        - .tolist(): Transforme un tableau Numpy OU Tenseur en liste pthon standard pratique
+    
+    Attributes:
+        model (nn.Module): Le réseau de neurones à entraîner/évaluer.
+        device (torch.device): Le support de calcul (Cuda 'gpu' ou 'cpu').
+        criterion (nn.modules.loss._Loss): La fonction de perte (ex: BCELoss).
+        optimizer (torch.optim.Optimizer): L'algorithme d'optimisation (ex: Adam).
+        threshold (float): Seuil de confiance pour valider un pseudo-label (0.0 à 1.0).
+        history (Dict[str, List[float]]): Journal de bord stockant les métriques par époque.
     """
-    def __init__(self, model, device, criterion, optimizer):
+    def __init__(
+        self, 
+        model: nn.Module, 
+        device: torch.device, 
+        criterion: nn.modules.loss._Loss, 
+        optimizer: torch.optim.Optimizer,
+        threshold: float = 0.95
+    ):
+        """
+        Args:
+            model (nn.Module): Le réseau de neurones à entraîner/évaluer.
+            device (torch.device): Le support de calcul (Cuda 'gpu' ou 'cpu').
+            criterion (nn.modules.loss._Loss): La fonction de perte (ex: BCELoss).
+            optimizer (torch.optim.Optimizer): L'algorithme d'optimisation (ex: Adam).
+            threshold (float): Seuil de confiance pour valider un pseudo-label (0.0 à 1.0).
+            history (Dict[str, List[float]]): Journal de bord stockant les métriques par époque.
+        """
         self.model = model.to(device)
         self.device = device
         self.criterion = criterion
         self.optimizer = optimizer
-        self.history = {'train_loss': [], 'val_f1': []}
+        self.threshold = threshold
+        self.history: Dict[str, List[float]] = {
+            'train_loss': [], 
+            'val_f2': [], 
+            'val_precision': [], 
+            'val_recall': []
+        }
 
-    def train_epoch(self, dataloader):
+
+    def train_epoch(self, dataloader:DataLoader)->float:
+        """
+        Exécute une passe complète (epoch) sur le jeu d'entraînement.
+        
+        Le modèle voit l'ensemble des images, calcule l'erreur et met à jour ses poids 
+        via la rétropropagation du gradient.
+        
+        **C'est la partie supervisée. En tant que tel, cette méthode équivaut à de la 
+        classification (comme catboost) mais gère des images/pixels 
+        plutot que de la donnée tabulaires.**
+
+        Args:
+            dataloader (DataLoader): Flux de données d'entraînement (Images, Labels, Paths).
+        
+        Returns:
+            float: La perte moyenne (Loss) calculée sur l'ensemble du dataset pour cette époque.
+        """
+        # Mode entraînement : active Dropout et BatchNorm
         self.model.train()
+        # Accumulateur, la loss est la moyenne des batch multiplié par la taille du batch puis
+        # ajouté au running_loss pour calculer a la fin de l'epoch, la moy tot du loss des images
         running_loss = 0.0
         
-        for inputs, labels, _ in dataloader:
-            inputs, labels = inputs.to(self.device), labels.to(self.device)
+        for images, labels, _ in dataloader: # on déballe les infos
+            # Transfert vers le device (GPU/CPU)
+            images = images.to(self.device)
+            # On prépare les labels au format attendu par BCELoss (Binary Cross Entropy) 
+            # ==> attend des labels float et de même forme que l'output (Batch,1) 
+            # d'où .float().view(-1,1) 
+            labels = labels.to(self.device).float().view(-1,1) # similaire a reshape
             
+            # ===== IMPORTANT: On efface les calculs du tour précédent ====
+            # Réinitialisation des gradients (évite l'accumulation parasite)
             self.optimizer.zero_grad()
-            outputs = self.model(inputs)
+            
+            # Le modèle fait son travail de prédiction (Propagation avant (Forward pass))
+            outputs = self.model(images)
+            
+            # ===== IMPORTANT: On calcul l'erreur associé a chaque neurone =========
+            # on compare la prédiction et la vérité ==> ecart faible label VS fort label
             loss = self.criterion(outputs, labels)
+            # On compare la contrib des poids à la loss (retroprogation du gradient (Backward pass))
             loss.backward()
+            
+            # ===== IMPORTANT: On ajuste les poids du modèle pour la prochaine itération =====
             self.optimizer.step()
             
-            running_loss += loss.item() * inputs.size(0)
+            running_loss += loss.item() * images.size(0)
             
-        epoch_loss = running_loss / len(dataloader.dataset)
-        self.history['train_loss'].append(epoch_loss)
+        epoch_loss = running_loss / len(dataloader.dataset) #type:ignore
+        self.history['train_loss'].append(epoch_loss) # On stock la loss du train de cet epoch
         return epoch_loss
 
-    def evaluate(self, dataloader):
+
+    def eval_metrics(
+        self, 
+        dataloader: DataLoader,
+    )-> Dict[str,float]:
+        """
+        Évalue la performance du modèle sur un jeu de test/validation.\n
+        Calcule le f2, la précision et le rappel en transformant les probabilités de 
+        sortie en classes binaires (seuil 0.5).
+
+        Args:
+            dataloader(DataLoader): Flux de données de validation.
+        
+        Returns:
+            Dict[str, float]: Dictionnaire contenant les scores {'f2', 'precision', 'recall'}.
+        """
+        # Determinisme, passe le modèle en mode évaluation (fige dropout et batchnorm par exemple)
         self.model.eval()
         preds_all = []
         labels_all = []
         
+        # Gele le modèle car mémorisation inutile et pour économie mémoire
         with torch.no_grad():
-            for inputs, labels, _ in dataloader:
-                inputs = inputs.to(self.device)
-                outputs = self.model(inputs)
-                _, preds = torch.max(outputs, 1)
+            for images, labels, _ in dataloader:
+                images = images.to(self.device)
                 
-                preds_all.extend(preds.cpu().numpy())
-                labels_all.extend(labels.numpy())
+                # Le forward (prédiction du modèle) du modele
+                y_proba = self.model(images)
                 
-        f1 = f1_score(labels_all, preds_all, average='weighted')
-        self.history['val_f1'].append(f1)
-        return f1, classification_report(labels_all, preds_all)
+                # 0.5 est le seuil de décision par défaut (le predict_proba)
+                y_preds = (y_proba > 0.5).int().cpu().numpy()
+                
+                # Stockage pour calcul global des métriques sklearn
+                preds_all.extend(y_preds.flatten().tolist())
+                labels_all.extend(labels.numpy().flatten().tolist())
+                
+        results = {
+            'f2': float(fbeta_score(labels_all, preds_all, beta=2, zero_division=0)),
+            'precision': float(precision_score(labels_all, preds_all, zero_division=0)),
+            'recall': float(recall_score(labels_all, preds_all, zero_division=0))
+        }
+        
+        # MAJ de l'historique
+        for key,value in results.items():
+            self.history[f'val_{key}'].append(value) 
+        return results
 
-    def generate_pseudo_labels(self, unlabeled_loader, threshold=0.95):
+
+    def pseudo_labels(
+        self, 
+        no_label_loader:DataLoader
+    )->Tuple[List[str], List[int]]:
         """
-        Passe sur les données sans label et retourne celles où le modèle est confiant.
-        Retourne : liste de chemins, liste de labels prédits
+        Génère des étiquettes pour les données inconnues via le mécanisme de confiance.\n
+        Pour chaque image sans label, si le modèle prédit une classe avec une probabilité 
+        supérieure ou égale au seuil de confiance, l'image est retenue (label faible).
+
+        Args:
+            no_label_loader (DataLoader): Flux de données non-labellisées.
+            
+        Returns:
+            Tuple[List[str], List[int]]: 
+                - Liste des chemins de fichiers validés.
+                - Liste des étiquettes (0 ou 1) attribuées par le modèle.
         """
+        # Determinisme, passe le modèle en mode évaluation (fige dropout et batchnorm par exemple)
         self.model.eval()
         pseudo_paths = []
         pseudo_labels = []
         
-        print("Génération des pseudo-labels...")
+        # Gele le modèle car mémorisation inutile et pour économie mémoire
         with torch.no_grad():
-            for inputs, _, paths in tqdm(unlabeled_loader):
-                inputs = inputs.to(self.device)
-                outputs = self.model(inputs)
-                probs = torch.softmax(outputs, dim=1)
+            for images, _, paths in tqdm(no_label_loader, desc="Pseudo-labeling"):
+                images = images.to(self.device)
                 
-                max_probs, preds = torch.max(probs, dim=1)
+                y_proba = self.model(images) # Sortie sigmoid
+                
+                # Pour le binaire, la confiance est soit proche de 1 (classe 1), 
+                # soit proche de 0 (classe 0).
+                # On calcule la distance par rapport à l'incertitude (0.5)
+                confidence_1 = y_proba
+                confidence_0 = 1 - y_proba
+                
+                # IMPORTANT: On réalise la comparaison (max_proba,y_pred,mask) sur GPU pour aller
+                # plus vite et on repasse après en CPU
+                max_proba, y_pred = torch.max(
+                    torch.cat([confidence_0, confidence_1], dim=1),
+                    dim=1
+                )
                 
                 # Filtrage par confiance
-                mask = max_probs >= threshold
+                mask = max_proba >= self.threshold # Comparaison tenseur/float OK  (broadcasting)
                 
+                # Envoi vers CPU que pour l'indexation
                 if mask.any():
-                    valid_paths = np.array(paths)[mask.cpu().numpy()]
-                    valid_preds = preds[mask].cpu().numpy()
+                    # Filtrage des chemins (numpy est plus pratique ici pour le masque)
+                    valid_paths = np.array(paths)[mask.cpu().numpy()].tolist()
+                    valid_preds = y_pred[mask].cpu().numpy().tolist()
                     
                     pseudo_paths.extend(valid_paths)
                     pseudo_labels.extend(valid_preds)
                     
         return pseudo_paths, pseudo_labels
+
+
+
+# ================================================================================
+
+
+class SslManager:
+    """
+    Gère la persistance des données d'une expérience de SSL.
+    
+    Sauvegarde des poids du modèle, log des métriques, archivage de la configuration 
+    et des labels faibles.
+
+    Attributes:
+        root_path (Path): Dossier racine de l'expérience.
+        ckpt_dir (Path): Sous-dossier pour les checkpoints (.pth, .ckpt).
+        log_path (Path): Chemin vers le fichier CSV de suivi des métriques.
+        config_path (Path): Chemin vers le fichier YAML des hyperparamètres.
+        labels_path (Path): Chemin vers l'export des labels faibles (Parquet).
+    """
+    def __init__(
+        self, 
+        experiment_name:str="experiment_01",
+        root_path:Path=Path.cwd(),
+        extension_path:Path|str = "",
+        
+        
+    ):
+        """
+        Initialise l'arborescence de l'expérience.
+        
+        Args:
+            experiment_name: Nom unique du test.
+            root_path: Dossier de base du projet.
+            extension_path: Sous-dossier optionnel (ex: 'outputs/models').
+        """
+        self.root_path = root_path/Path(extension_path)/experiment_name
+        self.root_path.mkdir(parents=True,exist_ok=True)
+        
+        self.ckpt_dir = self.root_path/"checkpoints"
+        self.ckpt_dir.mkdir(parents=True,exist_ok=True)
+        
+        self.log_path = self.root_path/"train_log.csv"
+        self.config_path = self.root_path/"config.yaml"
+        self.labels_path = self.root_path/"weak_labels.parquet"
+        
+        
+    def save_config(self,config: Optional[Dict[str, Any]] = None,**kwargs:Any):
+        """
+        Sauvegarde la configuration au format yml
+        
+        Args:
+            **kwargs: données de configuration
+        """
+        # On fusionne le dictionnaire 'config' et les 'kwargs'
+        datasave = config.copy() if config is not None else {}
+        datasave.update(kwargs)
+        
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            yaml.dump(datasave,f, default_flow_style=False)
+    
+    
+    def log_metrics(self,metrics_dict: Optional[Dict[str, Any]] = None,**kwargs:Any):
+        """
+        Créé et/ou maj le fichier csv des métriques a chaque epoch
+        """
+        datasave = metrics_dict.copy() if metrics_dict is not None else {}
+        datasave.update(kwargs)
+        
+        df = pd.DataFrame([datasave])
+        header = not self.log_path.exists()
+        df.to_csv(self.log_path, mode = 'a', index=False, header=header)
+
+    
+    def save_checkpoint(self, state: Dict[str, Any], is_best: bool = False):
+        """
+        Sauvegarde l'etat actuel et optionnellement le "best_model"
+        
+        Args:
+            state(Dict[str, Any]): Dictionnaire contenant 'state_dict', 'optimizer', 'epoch', etc.
+            is_best(bool): Si True, copie les poids dans 'best_model.pth'. Défaut False
+        """
+        last_path = self.ckpt_dir/"last_state.ckpt"
+        torch.save(state,last_path)
+        
+        if is_best:
+            best_path = self.ckpt_dir /"best_model.pth"
+            # On ne sauvegarde que les poids pour le best pour gagner de la place
+            torch.save(state.get('state_dict', state), best_path)
+    
+    
+    def save_weak_labels(self, paths: list, labels: list):
+        """
+        Sauvegarde les labels faibles générées pour les données inconnues
+        
+        Args:
+            paths(list): Liste des chemins des images de confiance
+            labels(list): Liste des labels faibles associés aux paths
+        """
+        
+        df_pseudo = pd.DataFrame({'path': paths, 'label': labels})
+        df_pseudo.to_parquet(self.labels_path, index=False)

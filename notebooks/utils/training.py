@@ -18,7 +18,7 @@ from sklearn.metrics import (
 )
 
 from typing import Dict,List, Tuple,Any, Optional
-
+from yaml.constructor import ConstructorError
 
 
 class Trainer:
@@ -67,7 +67,7 @@ class Trainer:
             'train_loss': [], 
             'val_f2': [], 
             'val_precision': [], 
-            'val_recall': []
+            'val_recall': [],
         }
 
 
@@ -142,6 +142,7 @@ class Trainer:
         """
         # Determinisme, passe le modèle en mode évaluation (fige dropout et batchnorm par exemple)
         self.model.eval()
+        probs_all = []
         preds_all = []
         labels_all = []
         
@@ -157,13 +158,19 @@ class Trainer:
                 y_preds = (y_proba > 0.5).int().cpu().numpy()
                 
                 # Stockage pour calcul global des métriques sklearn
+                probs_all.extend(y_proba.cpu().numpy().flatten().tolist())
                 preds_all.extend(y_preds.flatten().tolist())
                 labels_all.extend(labels.numpy().flatten().tolist())
                 
         results = {
             'f2': float(fbeta_score(labels_all, preds_all, beta=2, zero_division=0)),
             'precision': float(precision_score(labels_all, preds_all, zero_division=0)),
-            'recall': float(recall_score(labels_all, preds_all, zero_division=0))
+            'recall': float(recall_score(labels_all, preds_all, zero_division=0)),
+            'raw_data': {
+                'probs': np.array(probs_all),
+                'preds': np.array(preds_all),
+                'labels': np.array(labels_all)
+            } # Pour ECE et graphiques.
         }
         
         # MAJ de l'historique
@@ -174,7 +181,7 @@ class Trainer:
 
     def pseudo_labels(
         self, 
-        no_label_loader:DataLoader
+        unlabel_loader:DataLoader
     )->Tuple[List[str], List[int]]:
         """
         Génère des étiquettes pour les données inconnues via le mécanisme de confiance.\n
@@ -182,7 +189,7 @@ class Trainer:
         supérieure ou égale au seuil de confiance, l'image est retenue (label faible).
 
         Args:
-            no_label_loader (DataLoader): Flux de données non-labellisées.
+            unlabel_loader (DataLoader): Flux de données non-labellisées.
             
         Returns:
             Tuple[List[str], List[int]]: 
@@ -196,7 +203,7 @@ class Trainer:
         
         # Gele le modèle car mémorisation inutile et pour économie mémoire
         with torch.no_grad():
-            for images, _, paths in tqdm(no_label_loader, desc="Pseudo-labeling"):
+            for images, _, paths in tqdm(unlabel_loader, desc="Pseudo-labeling"):
                 images = images.to(self.device)
                 
                 y_proba = self.model(images) # Sortie sigmoid
@@ -227,7 +234,80 @@ class Trainer:
                     pseudo_labels.extend(valid_preds)
                     
         return pseudo_paths, pseudo_labels
+    
+    
+    def calculate_ece(
+        self, 
+        dataloader: Dict[str,np.ndarray]|DataLoader, 
+        n_bins: int = 10
+    ) -> float:
+        """
+        Calcule l'Expected Calibration Error qui mesure l'ecart entre la confiance du mdèle et
+        sa précision réelle.\n
+        ex: Si le modèle prédit 100 images avec une confiance de 0.99 et que moins de 99 images
+        sont correctes alors le modèle est considéré trop sûr de lui (biais de confirmation).
+        
+        ==> C'est la somme pondérée en valeur absolue de l'ecart entre l'exactitude et la proba
+        (si ece proche de 0, le modèle est bien calibré sinon c'est un menteur)
+        
+        Args:
+            dataloader(DataLoader): Flux de données de validation. SOIT PARTIR DU DATALOADER
+                SOIT DE L'OUTPUT DE EVAL_METRICS DANS RAW_DATAS POUR PAS REPETER
+            n_bins(int): Regroupement des prédictions par intervalle de confiance. 
+                ex: avec bin = 10 on créé 10 groupes sur l'intervalle (si ca va de 
+                0 a 10 on aura [0-0.1] [0.1-0.2] ... [0.9-1.0])
+            
+        """
+        self.model.eval()
+        if isinstance(dataloader,dict):
+            probs_all = dataloader['probs']
+            preds_all = dataloader['labels']
+            labels_all = dataloader['preds']
+        else:
+            probs_all = []
+            preds_all = []
+            labels_all = []
 
+            # Gele le modèle car mémorisation inutile et pour économie mémoire
+            with torch.no_grad():
+                for images, labels, _ in dataloader:
+                    images = images.to(self.device)
+                    
+                    # Le forward (prédiction du modèle) du modele
+                    y_proba = self.model(images)
+                    
+                    # 0.5 est le seuil de décision par défaut (le predict_proba)
+                    y_preds = (y_proba > 0.5).int().cpu().numpy()
+                    
+                    # Stockage pour calcul global des métriques sklearn
+                    probs_all.extend(y_proba.cpu().numpy().flatten().tolist())
+                    preds_all.extend(y_preds.flatten().tolist())
+                    labels_all.extend(labels.numpy().flatten().tolist())
+            
+            # Tableaux numpy pour les calculs
+            probs_all = np.array(probs_all)
+            preds_all = np.array(preds_all)
+            labels_all = np.array(labels_all)
+        
+        ece = 0.0
+        # On crée nos intervalles (ex: 0.0-0.1, 0.1-0.2...)
+        bin_boundaries = np.linspace(0, 1, n_bins + 1)
+        
+        for m in range(n_bins):
+            # Masque pour l'intervalle (bin)
+            bin_mask = (probs_all > bin_boundaries[m]) & (probs_all <= bin_boundaries[m+1])
+            
+            if np.any(bin_mask):
+                # n_i / n : Proportion d'échantillons dans ce bin
+                bin_weight = np.mean(bin_mask)
+                # Accuracy du bin : moyenne des prédictions correctes
+                bin_acc = np.mean(labels_all[bin_mask] == (preds_all[bin_mask] > 0.5))
+                # Confiance moyenne du bin
+                bin_conf = np.mean(probs_all[bin_mask])
+                # Somme pondérée des écarts
+                ece += bin_weight * np.abs(bin_acc - bin_conf)
+                
+        return float(ece)
 
 
 # ================================================================================
@@ -329,3 +409,74 @@ class SslManager:
         
         df_pseudo = pd.DataFrame({'path': paths, 'label': labels})
         df_pseudo.to_parquet(self.labels_path, index=False)
+    
+    
+    def load_config(self, bypass:bool=False):
+        """
+        Charge le fichier de configuration pour avec les mêmes paramètres Modele/DataLoader
+        """
+        try:
+            with open(self.config_path, 'r') as f:
+                return yaml.safe_load(f)
+        except ConstructorError as e:
+            # En présence d'objet pytorch complexe (ex: toch.device), safe_load ne fonctionnera pas
+            if bypass:
+                print("Chargement d'objets pytorch complexe, risque sécuritaire")
+                with open(self.config_path, 'r') as f:
+                    return yaml.load(f, Loader=yaml.Loader)
+            else:
+                print("Présence d'objets complexes.")
+                raise e
+    
+    def load_model(self, model:nn.Module, model_name:str):
+        """
+        Charge les poids retenus pour un état du modèle (.pth).
+        On ne charge que les poids qu'on connecte au modele (inférence/prod)!
+        
+        Args:
+            model(nn.Module): l'instance modele
+            model_name(str): l'état du modèle qu'on veut chargé (.pth) (les poids a associer)
+        """
+        model_path = self.ckpt_dir / model_name
+        
+        if not model_path.exists():
+            print(f"Aucun fichier trouvé à {model_path}")
+            return
+        
+        
+        # On lit le fichier sur le disque (juste un dico de données contenant 
+        # {nom_couche:tenseur de poids}) != connections aux neuronnes du modele
+        # map_location permet de charger sur CPU même si sauvé sur GPU
+        weights_dict = torch.load(model_path, map_location=torch.device('cpu')) 
+        
+        # Connecte les poids (dico) au model
+        model.load_state_dict(weights_dict)
+        model.eval() # Toujours passer en mode évaluation après chargement
+    
+    
+    def load_checkpoint(self, model: nn.Module, optimizer: torch.optim.Optimizer):
+        """
+        Charge un checkpoint (l'état complet d'un entrainement: modele/optimiseur/epoch).
+        Parfait pour la reprise d'un entrainement.
+        
+        Args:
+            model(nn.Module): l'instance modele
+            optimizer(torch.optim.Optimizer): l'instance de l'optimiseur
+        """
+        ckpt_path = self.ckpt_dir / "last_state.ckpt"
+        
+        if not ckpt_path.exists():
+            print(f"Pas de checkpoint à {ckpt_path}")
+            return 0
+        
+        checkpoint = torch.load(ckpt_path)
+        
+        # Injection des poids au modele
+        model.load_state_dict(checkpoint['state_dict'])
+        # Chargement de l'optimiseur
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        # Chargement de l'epoch
+        epoch = checkpoint.get('epoch', 0)
+        print(f"Reprise de l'entraînement à l'epoch {epoch}")
+        return epoch +1
+    

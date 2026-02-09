@@ -276,3 +276,79 @@ def plot_clustering(
 
     plt.tight_layout()
     return fig
+
+
+# ===========================================================================
+
+
+def plot_confidence(
+    probas:npt.NDArray[Any],
+    threshold_range:Optional[npt.NDArray[Any]]=None,
+    save_path: Optional[Path]=Path.cwd(),
+    title_save:str="plot_probas",
+    stats:bool=False,
+)->Figure:
+    """
+    Plot un histogramme de la distibution de probabilité de classe par le modèle.\n
+    
+    3 traits en pointillé servent de référence:
+        - le trait ROUGE pour le seuil standard (0.5)
+        - le trait VERT pour le seuil supérieur (initial) de l'entrainement
+        - le trait ORANGE pour le seuil inférieur (final) de l'entrainement
+    
+    On a la proba en abscisse et le nombre d'image en ordonné.
+    
+    
+    :param probas: Le tableau des probabilités
+    :type probas: npt.NDArray[Any]
+    :param threshold_range: l'intervalle du threshold utilisé (decay). Défaut None
+    :type threshold_range: Optional[npt.NDArray[Any]]
+    :param save_path: Le chemin de sauvegarde de la figure. Par défaut dossier courant
+    :type save_path: Optional[Path]
+    :param title_save: le nom de la figure. par défaut plot_probas
+    :type title_save: str
+    :param stats: L'affichage ou non d'un résumé statistique. Par défaut False
+    :type stats: bool
+    :return: la figure
+    :rtype: Figure
+    """
+    
+    # Config ed la figure
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Visualisation
+    ax.hist(probas, bins=50, color='skyblue', edgecolor='black', alpha=0.7)
+    ax.axvline(x=0.5, color='red', linestyle='--', label='Frontière de décision (0.5)')
+    
+    # Affichage des seuils
+    if threshold_range is not None and len(threshold_range) > 0:
+        ax.axvline(
+            x=max(threshold_range), 
+            color='green', 
+            linestyle=':', 
+            label=f'Seuil initial ({max(threshold_range)})'
+        )
+        ax.axvline(
+            x=min(threshold_range), 
+            color='orange', 
+            linestyle=':', 
+            label=f'Seuil final ({min(threshold_range)})'
+        )
+    
+    ax.set_title("Distribution des scores de confiance sur le jeu inconnu")
+    ax.set_xlabel("Probabilité prédite (0 = Sain, 1 = Cancer)")
+    ax.set_ylabel("Nombre d'images")
+    ax.legend()
+    
+    # Statistiques
+    if stats:
+        print(f"--- Statistiques des scores ---")
+        print(f"Médiane : {np.median(probas):.4f}")
+        print(f"Moyenne : {np.mean(probas):.4f}")
+        print(f"Images entre 0.4 et 0.6 (incertaines) : {np.sum((probas > 0.4) & (probas < 0.6))}")
+        print(f"Images > 0.95 (très sûres) : {np.sum(probas > 0.95)}")
+        
+    plt.tight_layout()
+    if save_path:
+        save_figure(title_save,save_path)
+    return fig

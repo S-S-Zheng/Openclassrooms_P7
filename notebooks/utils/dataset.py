@@ -12,7 +12,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 # Pour redimensionner, normaliser ou augmenter images (rotation, etc.).
 from torchvision import transforms
-from typing import List, Any, Union, Optional,Tuple, Sequence
+from typing import List, Any, Union, Optional,Tuple, Sequence,Literal
 
 
 # ============================================================================
@@ -42,24 +42,38 @@ class BaseTransform:
     def preproc(
         self, 
         train:bool=False,
-        horiz_flip:float = 0.5,
-        rotation:int = 10,
-        brightness:float | tuple[float, float] = 0.2,
-        contrast:float | tuple[float, float] = 0.2,
-        saturation:float | tuple[float, float] = 0.2,
+        # horiz_flip:float = 0.5,
+        # rotation:int = 10,
+        # brightness:float | tuple[float, float] = 0.2,
+        # contrast:float | tuple[float, float] = 0.2,
+        # saturation:float | tuple[float, float] = 0.2,
+        strong_augment:bool=False,
+        **kwargs
     )->transforms.Compose:
         """
         Pipeline de transformation Pytorch\n
         Prépare les images: redimensionne et normalise.
-        Si c'est le jeu d'entrainement: augmentation en plus
+        Si c'est le jeu d'entrainement: augmentation en plus auquel on applique ou non une forte augm
+        
+        Paramètres kwargs possible pour l'augmentation du train:
+        
+            - h_flip = kwargs.get('horiz_flip', 0.5)
+            - rot = kwargs.get('rotation', 10)
+            - bright = kwargs.get('bright', 0.2)
+            - contrast = kwargs.get('contrast', 0.2)
+            - saturation = kwargs.get('saturation',0.2)
+            - crop = kwargs.get('crop',(0.08,1))
+            - erasing = kwargs.get('erasing',0.5)
         
         Args:
             train(bool) :Inclure les augmentation si c'est le train ou pas. défaut: False
-            horiz_flip(float): inclinaison horizontale. défaut = 0.5,
-            rotation(int): Angle de rotation défaut = 10,
-            brightness(float | tuple[float, float]): luminosité, défaut = 0.2,
-            contrast(float | tuple[float, float]): contraste, défaut = 0.2,
-            saturation(float | tuple[float, float]): saturation, défaut = 0.2,
+            # horiz_flip(float): inclinaison horizontale. défaut = 0.5,
+            # rotation(int): Angle de rotation défaut = 10,
+            # brightness(float | tuple[float, float]): luminosité, défaut = 0.2,
+            # contrast(float | tuple[float, float]): contraste, défaut = 0.2,
+            # saturation(float | tuple[float, float]): saturation, défaut = 0.2,
+            strong_augment(bool): Si True, forte augmentation appliqué au jeu train. défaut False
+        
         Returns:
             transforms.Compose: Un objet callable appliquant les transformations.
 
@@ -68,20 +82,55 @@ class BaseTransform:
         
         if train:
             # Data Augmentation seulement pour l'entraînement
-            tf_list.extend([
-                transforms.RandomHorizontalFlip(p=horiz_flip),
-                transforms.RandomRotation(degrees=rotation),
-                transforms.ColorJitter(
-                    brightness=brightness, 
-                    contrast=contrast,
-                    saturation=saturation
-                ),
-            ])
+            # tf_list.extend([
+            #     transforms.RandomHorizontalFlip(p=horiz_flip),
+            #     transforms.RandomRotation(degrees=rotation),
+            #     transforms.ColorJitter(
+            #         brightness=brightness, 
+            #         contrast=contrast,
+            #         saturation=saturation
+            #     ),
+            # ])
+            # Paramètres par défaut avec kwargs.get(clé, défaut)
+            h_flip = kwargs.get('horiz_flip', 0.5)
+            rot = kwargs.get('rotation', 10)
+            
+            tf_list.append(transforms.RandomHorizontalFlip(p=h_flip))
+            tf_list.append(transforms.RandomRotation(degrees=rot))
+            
+            if strong_augment:
+                # On ajoute des augmentations importantes
+                bright = kwargs.get('bright', 0.2)
+                contrast = kwargs.get('contrast', 0.2)
+                saturation = kwargs.get('saturation',0.2)
+                crop = kwargs.get('crop',(0.08,1))
+                
+                
+                tf_list.extend([
+                    transforms.ColorJitter(
+                        brightness=bright,
+                        contrast=contrast,
+                        saturation=saturation
+                    ),
+                    transforms.RandomResizedCrop(self.size, scale=crop),
+                ])
             
         # Rearque: cette partie est détachée car si train, il faut d'abord augmenter avant
         # de tenseuriser et normaliser
         tf_list.extend([
             transforms.ToTensor(), # Transforme l'image PIL en numérique(0.0 a 1.0)
+        ])
+        
+        # ===== ON DOIT PLACER L'ERASING APRES LA TENSEURISATION (CONTRAINTE TORCHVISION) ===
+        # la méthode diffère du reste qui travail sur PIL, erasing remplace les valeurs du tenseur
+        # par 0 == efface l'image/ noirci
+        if strong_augment:
+            erasing = kwargs.get('erasing',0.5)
+            tf_list.extend([
+                transforms.RandomErasing(p=erasing)
+            ])
+        
+        tf_list.extend([
             transforms.Normalize(self.mean, self.std) # Normalise les images
         ])
         return transforms.Compose(tf_list)

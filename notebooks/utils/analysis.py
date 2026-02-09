@@ -1,7 +1,3 @@
-"""
-Réduction de dimension, Clustering et Métriques.
-"""
-
 # imports
 # import numpy as np
 import pandas as pd

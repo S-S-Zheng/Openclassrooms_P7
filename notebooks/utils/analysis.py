@@ -1,5 +1,5 @@
 # imports
-# import numpy as np
+import numpy as np
 import pandas as pd
 # import matplotlib.pyplot as plt
 # import seaborn as sns
@@ -25,15 +25,6 @@ class ClusterManager:
 
     Cette classe permet de comparer la structure naturelle des données (clusters)
     avec les diagnostics réels (labels) pour valider la qualité des embeddings.
-    
-    Attributes:
-        df (pd.DataFrame): Le DataFrame contenant les données et les résultats.
-        feature_cols (List[str]): Liste des noms de colonnes commençant par 
-            feature_prefix(str)="feature_".
-        X (npt.NDArray[Any]): Matrice brute des caractéristiques.
-        labels_true (npt.NDArray[Any]): Vecteur des étiquettes réelles (Ground Truth).
-        X_scaled (npt.NDArray[Any]): Données normalisées (moyenne 0, variance 1).
-        reductions (Dict[str, npt.NDArray[Any]]): Coordonnées issues du reducteur de dimension.
     """
     def __init__(self, features_df:pd.DataFrame, feature_prefix:str="feature_"):
         """
@@ -42,9 +33,9 @@ class ClusterManager:
             feature_cols (List[str]): Liste des noms de colonnes commençant par 
                 feature_prefix(str)="feature_".
             X (npt.NDArray[Any]): Matrice brute des caractéristiques.
-                labels_true (npt.NDArray[Any]): Vecteur des étiquettes réelles (Ground Truth).
+            labels_true (npt.NDArray[Any]): Vecteur des étiquettes réelles (Ground Truth).
             X_scaled (npt.NDArray[Any]): Données normalisées (moyenne 0, variance 1).
-                reductions (Dict[str, npt.NDArray[Any]]): Coordonnées issues du reducteur de dimension.
+            reductions (Dict[str, npt.NDArray[Any]]): Coordonnées issues du reducteur de dimension.
         """
         # CREEE UNE COPIE DE LA DF, A VOIR SI INDISPENSABLE
         self.df: pd.DataFrame = features_df.copy()
@@ -180,8 +171,8 @@ class ClusterManager:
 
     def evaluate_silhouette(
         self,
-        df_feature:Any,
-        method:str = 'cluster_pca_kmeans'
+        reductor_name: str = 'pca',
+        cluster_name: str = 'kmeans'
     )->float:
         """
         Calcul le coef de silhouette. Ce coef prend en compte la densité des clusters ET
@@ -193,19 +184,29 @@ class ClusterManager:
         Le coeff est compris entre -1 et 1, 1 traduisant un excellent clustering.
         
         Args:
-            method(str): methode de clustering a comparer "cluster_nomReducteur_nomCluster"
-                (défaut: cluster_pca_kmeans)
+        #     method(str): methode de clustering a comparer "cluster_nomReducteur_nomCluster"
+        #         (défaut: cluster_pca_kmeans)
+            reductor_name(str): Nom de la méthode de réductions
+            cluster_name(str): Nom de la méthode de clustering
         
         Returns:
             silhouette(float): score silhouette
         """
-        labels = self.df[method]
+        labels = self.df[f"cluster_{reductor_name}_{cluster_name}"]
+        data_coords = self.reductions.get(reductor_name)
+        if data_coords is None: 
+            return -1.0 # pour faire plaisir a Pylance
+        
         # La silhouette nécessite au moins 2 clusters et moins que le nombre total de points
         num_labels = len(set(labels))
         if num_labels < 2:
             return -1.0 # Score par défaut si un seul cluster (DBSCAN peut faire ça)
-            
-        return float(silhouette_score(df_feature, labels))
+        
+        # Retrait du bruit sur DBSCAN
+        mask = labels != -1
+        if np.sum(mask) < 2: return -1.0
+        
+        return float(silhouette_score(data_coords[mask], labels[mask]))
 
 
     # def plot_results(self):

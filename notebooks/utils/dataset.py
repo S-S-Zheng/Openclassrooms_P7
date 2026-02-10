@@ -100,8 +100,8 @@ class BaseTransform:
             
             if strong_augment:
                 # On ajoute des augmentations importantes
-                bright = kwargs.get('bright', 0.2)
-                contrast = kwargs.get('contrast', 0.2)
+                bright = kwargs.get('bright', 0.4)
+                contrast = kwargs.get('contrast', 0.4)
                 saturation = kwargs.get('saturation',0.2)
                 crop = kwargs.get('crop',(0.75,1)) # on crop 25% de l'image par défaut
                 
@@ -110,7 +110,8 @@ class BaseTransform:
                     transforms.ColorJitter(
                         brightness=bright,
                         contrast=contrast,
-                        saturation=saturation
+                        saturation=saturation,
+                        hue = 0.1 # variation de teinte légère
                     ),
                     transforms.RandomResizedCrop(self.size, scale=crop),
                 ])
@@ -158,7 +159,7 @@ class ImagesToDataset(Dataset):
     """
     def __init__(
         self, 
-        file_paths:List[Path], 
+        file_paths:List[Union[Path, str]], 
         labels:Sequence[Union[str,int]], # Sequence est immutable != List qui l'est
         transform:Optional[transforms.Compose]=None
     ):
@@ -185,7 +186,7 @@ class ImagesToDataset(Dataset):
             Tuple (tenseur_image, label, chemin_du_fichier)
         """
         path = self.file_paths[idx]
-        label = self.labels[idx]
+        label = float(self.labels[idx]) # On s'assure d'avoir du float32 pour le criterion
         
         image = Image.open(path).convert('RGB')
         if self.transform:

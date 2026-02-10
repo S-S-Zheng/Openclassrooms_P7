@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 # Contient des architectures pré-entraînées (ResNet, VGG).
 from torchvision import models
-
+from typing import Literal
 
 # ============================================================================
 
@@ -25,7 +25,11 @@ class FeatureExtractor(nn.Module):
         backbone (nn.Sequential): L'architecture ResNet amputée de sa couche de décision finale.
     
     """
-    def __init__(self, pretrained:bool=True):
+    def __init__(
+        self, 
+        pretrained:bool=True,
+        model_name: Literal['resnet18','resnet34', 'resnet50'] = 'resnet34',
+    ):
         """
         Initialise l'extracteur.
         
@@ -33,11 +37,13 @@ class FeatureExtractor(nn.Module):
             pretrained (bool): Si True, charge les poids entraînés sur ImageNet. 
                 Fortement recommandé pour les petits datasets.
             weights (Literal[ResNet34_Weights.IMAGENET1K_V1] | None): Charge les poids
-            base_model (ResNet): Modele de Deep Learning chargé pour le transfer learning
+            # base_model (ResNet): Modele de Deep Learning chargé pour le transfer learning
+            model_name(Literal['resnet18','resnet34', 'resnet50']): model a chargé: défaut resnet34
             backbone (nn.Sequential): L'architecture ResNet amputée de sa couche de décision finale.
         """
         super().__init__()
-        base_model = models.resnet34(weights='DEFAULT' if pretrained else None)
+        chosen_model = getattr(models, model_name)
+        base_model = chosen_model(weights='DEFAULT' if pretrained else None)
         
         # Transfer learning: On va faire passer ResNet d'un classifieur à un extracteur de features
         # ==> On garde tout sauf la couche finale (fc la couche de classification)
@@ -91,56 +97,64 @@ class BrainCancerClassifier(nn.Module):
     """
     def __init__(
         self, 
-        num_classes:int=1, # binaire 1 si Sigmoid, 2 si Softmax
+        num_classes:int=1, # binaire 1 si Sigmoid/Logit, 2 si Softmax
         freeze_backbone:bool=True,
-        n_features:int=512,
-        dropout:float=0.5
+        backbone_sup:bool=False,
+        model_name: Literal['resnet18','resnet34', 'resnet50'] = 'resnet34',
+        dropout:float=0.4
     ):
         """
         Args:
             num_classes(int): Nombre de classes. défaut 1 (binaire)
             freeze_backbone(bool): Pour geler les couches du modèle si True. Défaut True
             n_features(int): Correspond au nombre de feature renvoyé par le CNN. Défaut 512
-            dropout(float): ratio de noeud neuronale a désact aléatoiremt (evite par coeur): Défaut:0.5
+            dropout(float): ratio de noeud neuronale a désact aléatoiremt (evite par coeur): Défaut:0.4
         """
         super().__init__()
-        base_model = models.resnet34(weights='DEFAULT')
+        # ATTENTION PROPRE A RESNET, SI D'AUTRES (EX VGG) IL FAUDRA APPORTER MODIF
+        chosen_model = getattr(models, model_name)
+        base_model = chosen_model(weights='DEFAULT')
+        self.n_features = base_model.fc.in_features
         
         # On décapite l'extracteur (retrait de a derniere couche fc)
         self.backbone = nn.Sequential(*list(base_model.children())[:-1])
-        
         # au lieu de passer par no_grad(), on gele directement l'extracteur ici
         # on gèle toutes couches
         if freeze_backbone:
             for param in self.backbone.parameters():
                 param.requires_grad = False
             
+            # ====================== OPTIONNEL ====================
+            # Option très utile lorsque le jeu est suffisant (>500 images)
+            if backbone_sup:
             # On dégèle la dernière couche restante afin de permettre au modèle d'ajuster
             # ses poids (ré apprendre) sur la compréhension avancée tout en gardant ses bases intact
             # ==> Améliore le modèle théoriquement
-            for param in self.backbone[-1].parameters():
-                param.requires_grad = True
+                for param in self.backbone[-1].parameters():
+                    param.requires_grad = True
+            # =================================================
         
         # On définit la tête de classification séparément
-        half_features = int(n_features/2)
         self.fc = nn.Sequential(
             nn.Flatten(), # Aplati le cube de donnée (comme torch.flatten(x,1)): OBLIGATOIRE
             nn.Linear(
-                n_features, 
-                half_features
+                self.n_features, 
+                self.n_features//2
             ), # 1ere couche de calcul qui combine # les features : OBLIGATOIRE
-            nn.BatchNorm1d(
-                half_features
-            ), # Normalise sorties du Linear pour aider la convergence: OPTIONNEL
+            # BatchNorm normalise sorties du Linear pour aider la convergence: OPTIONNEL
+            # nn.BatchNorm1d(self.n_features//2),
+            # LayerNorm remplace BatchNorm pour petits jeux (plus stable): OPTIONNEL
+            nn.LayerNorm(self.n_features//2),
             nn.ReLU(), # Fonction d'activation qui on/off les neurones: OBLIGATOIRE
-            nn.Dropout(
-                dropout
-            ), # off ratio de neurones aléatoiremt -> éviter le "par coeur" : OPTIONNEL
+            # off ratio de neurones aléatoiremt -> éviter le "par coeur" : OPTIONNEL
+            nn.Dropout(dropout), 
             nn.Linear(
-                half_features, 
+                self.n_features//2, 
                 num_classes
-            ), # Comrpime les 256 neurnes à la rép fin: OBLIGATOIRE
-            nn.Sigmoid() # Standardise la réponse finale entre 0 et 1: OBLIGATOIORE
+            ), # Comprime les 256 neurnes à la rép fin: OBLIGATOIRE
+            # nn.Sigmoid() # Standardise la réponse finale entre 0 et 1: Semi-obligatoire
+            # si on eneleve sigmoid ==> output != [0,1] mais [-inf,+inf]
+            # IMPLIQUE D'UTILISER BCEWithLogitLoss (plus stable math) au lieu de BCELoss
         )
 
     def forward(self, x:torch.Tensor)-> torch.Tensor:

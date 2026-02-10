@@ -106,6 +106,13 @@ class Trainer:
             # d'où .float().view(-1,1) 
             labels = labels.to(self.device).float().view(-1,1) # similaire a reshape
             
+            # ================= LABEL SMOOTHING MANUEL (version pythorch pas assez recente)
+            # Application manuelle du Label Smoothing (pour 0.1)
+            # La formule : labels * (1 - alpha) + alpha / nb_classes
+            # Pour du binaire avec alpha=0.1 :
+            labels = labels * (1 - 0.1) + 0.05
+            # ========================================================
+            
             # ===== IMPORTANT: On efface les calculs du tour précédent ====
             # Réinitialisation des gradients (évite l'accumulation parasite)
             self.optimizer.zero_grad()
@@ -155,11 +162,12 @@ class Trainer:
             for images, labels, _ in dataloader:
                 images = images.to(self.device)
                 
-                # Le forward (prédiction du modèle) du modele
-                y_proba = self.model(images)
+                # y_proba = self.model(images) # Sortie sigmoid IF SIGMOID DANS models.py si logits
+                logits = self.model(images)
+                y_proba = torch.sigmoid(logits) # proba du coup on repasse en sigmoid
                 
-                # 0.5 est le seuil de décision par défaut (le predict_proba)
-                y_preds = (y_proba > 0.5).int().cpu().numpy()
+                # les prdictions
+                y_preds = (y_proba > self.threshold).int().cpu().numpy()
                 
                 # Stockage pour calcul global des métriques sklearn
                 probs_all.extend(y_proba.cpu().numpy().flatten().tolist())
@@ -214,7 +222,9 @@ class Trainer:
             for images, _, paths in tqdm(unlabel_loader, desc="Pseudo-labeling"):
                 images = images.to(self.device)
                 
-                y_proba = self.model(images) # Sortie sigmoid
+                # y_proba = self.model(images) # Sortie sigmoid IF SIGMOID DANS models.py si logits
+                logits = self.model(images)
+                y_proba = torch.sigmoid(logits) # proba du coup on repasse en sigmoid
                 
                 # Pour le binaire, la confiance est soit proche de 1 (classe 1), 
                 # soit proche de 0 (classe 0).
@@ -281,8 +291,9 @@ class Trainer:
                 for images, labels, _ in dataloader:
                     images = images.to(self.device)
                     
-                    # Le forward (prédiction du modèle) du modele
-                    y_proba = self.model(images)
+                    # y_proba = self.model(images) # Sortie sigmoid IF SIGMOID DANS models.py si logits
+                    logits = self.model(images)
+                    y_proba = torch.sigmoid(logits) # proba du coup on repasse en sigmoid
                     
                     # 0.5 est le seuil de décision par défaut (le predict_proba)
                     y_preds = (y_proba > 0.5).int().cpu().numpy()
@@ -310,7 +321,7 @@ class Trainer:
                 bin_weight = np.mean(bin_mask)
                 # Accuracy du bin : moyenne des prédictions correctes du bin != accuracy dans results
                 # qui est la globale
-                bin_acc = np.mean(labels_all[bin_mask] == (preds_all[bin_mask] > 0.5))
+                bin_acc = np.mean(labels_all[bin_mask] == (preds_all[bin_mask]))
                 # Confiance moyenne du bin
                 bin_conf = np.mean(probs_all[bin_mask])
                 # Somme pondérée des écarts

@@ -103,7 +103,7 @@ class BaseTransform:
                 bright = kwargs.get('bright', 0.2)
                 contrast = kwargs.get('contrast', 0.2)
                 saturation = kwargs.get('saturation',0.2)
-                crop = kwargs.get('crop',(0.08,1))
+                crop = kwargs.get('crop',(0.75,1)) # on crop 25% de l'image par défaut
                 
                 
                 tf_list.extend([
@@ -125,7 +125,7 @@ class BaseTransform:
         # la méthode diffère du reste qui travail sur PIL, erasing remplace les valeurs du tenseur
         # par 0 == efface l'image/ noirci
         if strong_augment:
-            erasing = kwargs.get('erasing',0.5)
+            erasing = kwargs.get('erasing',0.1) # on efface par défaut 10% de l'image
             tf_list.extend([
                 transforms.RandomErasing(p=erasing)
             ])

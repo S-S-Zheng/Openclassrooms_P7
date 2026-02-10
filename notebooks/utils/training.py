@@ -14,7 +14,8 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 
 from sklearn.metrics import (
-    precision_score,recall_score,fbeta_score
+    precision_score,recall_score,fbeta_score, 
+    accuracy_score, roc_auc_score, average_precision_score
 )
 
 from typing import Dict,List, Tuple,Any, Optional
@@ -68,6 +69,9 @@ class Trainer:
             'val_f2': [], 
             'val_precision': [], 
             'val_recall': [],
+            'val_accuracy':[],
+            "val_auc":[],
+            "val_pr_auc":[]
         }
 
 
@@ -166,6 +170,9 @@ class Trainer:
             'f2': float(fbeta_score(labels_all, preds_all, beta=2, zero_division=0)),
             'precision': float(precision_score(labels_all, preds_all, zero_division=0)),
             'recall': float(recall_score(labels_all, preds_all, zero_division=0)),
+            "accuracy": accuracy_score(labels_all, preds_all),
+            "auc": roc_auc_score(labels_all, probs_all),
+            "pr_auc": average_precision_score(labels_all, probs_all),
             'raw_data': {
                 'probs': np.array(probs_all),
                 'preds': np.array(preds_all),
@@ -260,11 +267,11 @@ class Trainer:
             
         """
         self.model.eval()
-        if isinstance(dataloader,dict):
+        if isinstance(dataloader,dict): # si on a results de l'eval_metrics
             probs_all = dataloader['probs']
             preds_all = dataloader['labels']
             labels_all = dataloader['preds']
-        else:
+        else: # Si eval_metrics n'a pas encore output results, on peut recalculer
             probs_all = []
             preds_all = []
             labels_all = []
@@ -294,14 +301,15 @@ class Trainer:
         # On crée nos intervalles (ex: 0.0-0.1, 0.1-0.2...)
         bin_boundaries = np.linspace(0, 1, n_bins + 1)
         
-        for m in range(n_bins):
+        for i in range(n_bins):
             # Masque pour l'intervalle (bin)
-            bin_mask = (probs_all > bin_boundaries[m]) & (probs_all <= bin_boundaries[m+1])
+            bin_mask = (probs_all > bin_boundaries[i]) & (probs_all <= bin_boundaries[i+1])
             
             if np.any(bin_mask):
                 # n_i / n : Proportion d'échantillons dans ce bin
                 bin_weight = np.mean(bin_mask)
-                # Accuracy du bin : moyenne des prédictions correctes
+                # Accuracy du bin : moyenne des prédictions correctes du bin != accuracy dans results
+                # qui est la globale
                 bin_acc = np.mean(labels_all[bin_mask] == (preds_all[bin_mask] > 0.5))
                 # Confiance moyenne du bin
                 bin_conf = np.mean(probs_all[bin_mask])

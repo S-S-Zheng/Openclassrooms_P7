@@ -154,7 +154,7 @@ class Trainer:
         # Determinisme, passe le modèle en mode évaluation (fige dropout et batchnorm par exemple)
         self.model.eval()
         probs_all = []
-        preds_all = []
+        # preds_all = []
         labels_all = []
         
         # Gele le modèle car mémorisation inutile et pour économie mémoire
@@ -166,31 +166,43 @@ class Trainer:
                 logits = self.model(images)
                 y_proba = torch.sigmoid(logits) # proba du coup on repasse en sigmoid
                 
-                # les prdictions
-                y_preds = (y_proba > self.threshold).int().cpu().numpy()
+                # # les prdictions
+                # y_preds = (y_proba > 0.5).int().cpu().numpy()
                 
                 # Stockage pour calcul global des métriques sklearn
                 probs_all.extend(y_proba.cpu().numpy().flatten().tolist())
-                preds_all.extend(y_preds.flatten().tolist())
+                # preds_all.extend(y_preds.flatten().tolist())
                 labels_all.extend(labels.numpy().flatten().tolist())
                 
+        
+        probs_all = np.array(probs_all)
+        labels_all = np.array(labels_all)
+        # predction au seuil standard (0.5 pour les métriques)
+        preds_05 = (probs_all > 0.5).astype(int)
+        # prediction au seuil customisé (pour opt threshold comme SSL)
+        preds_thresh = (probs_all > self.threshold).astype(int)
+        
         results = {
-            'f2': float(fbeta_score(labels_all, preds_all, beta=2, zero_division=0)),
-            'precision': float(precision_score(labels_all, preds_all, zero_division=0)),
-            'recall': float(recall_score(labels_all, preds_all, zero_division=0)),
-            "accuracy": accuracy_score(labels_all, preds_all),
+            'f2': float(fbeta_score(labels_all, preds_05, beta=2, zero_division=0)),
+            'precision': float(precision_score(labels_all, preds_05, zero_division=0)),
+            'recall': float(recall_score(labels_all, preds_05, zero_division=0)),
+            "accuracy": accuracy_score(labels_all, preds_05),
             "auc": roc_auc_score(labels_all, probs_all),
             "pr_auc": average_precision_score(labels_all, probs_all),
             'raw_data': {
                 'probs': np.array(probs_all),
-                'preds': np.array(preds_all),
+                # 'preds': np.array(preds_all),
                 'labels': np.array(labels_all)
-            } # Pour ECE et graphiques.
+            }, # Pour ECE et graphiques.
+            'ssl_stats': {
+                'precision_at_thresh': float(precision_score(labels_all, preds_thresh, zero_division=0)),
+                'count_above_thresh': int(np.sum(probs_all > self.threshold)),
+            },# Pour SSL: si count_above = 0, le threshold est trop elevé,  
         }
         
         # MAJ de l'historique
         for key,value in results.items():
-            if key != 'raw_data':
+            if key != 'raw_data' and key != 'ssl_stats':
                 self.history[f'val_{key}'].append(value)
         return results
 
@@ -257,7 +269,7 @@ class Trainer:
     def calculate_ece(
         self, 
         dataloader: Dict[str,np.ndarray]|DataLoader, 
-        n_bins: int = 10
+        n_bins: int = 15
     ) -> float:
         """
         Calcule l'Expected Calibration Error qui mesure l'ecart entre la confiance du mdèle et
@@ -277,13 +289,12 @@ class Trainer:
             
         """
         self.model.eval()
+        
         if isinstance(dataloader,dict): # si on a results de l'eval_metrics
             probs_all = dataloader['probs']
-            preds_all = dataloader['labels']
-            labels_all = dataloader['preds']
+            labels_all = dataloader['labels']
         else: # Si eval_metrics n'a pas encore output results, on peut recalculer
             probs_all = []
-            preds_all = []
             labels_all = []
 
             # Gele le modèle car mémorisation inutile et pour économie mémoire
@@ -295,17 +306,12 @@ class Trainer:
                     logits = self.model(images)
                     y_proba = torch.sigmoid(logits) # proba du coup on repasse en sigmoid
                     
-                    # 0.5 est le seuil de décision par défaut (le predict_proba)
-                    y_preds = (y_proba > 0.5).int().cpu().numpy()
-                    
                     # Stockage pour calcul global des métriques sklearn
                     probs_all.extend(y_proba.cpu().numpy().flatten().tolist())
-                    preds_all.extend(y_preds.flatten().tolist())
                     labels_all.extend(labels.numpy().flatten().tolist())
             
             # Tableaux numpy pour les calculs
             probs_all = np.array(probs_all)
-            preds_all = np.array(preds_all)
             labels_all = np.array(labels_all)
         
         ece = 0.0
@@ -319,9 +325,8 @@ class Trainer:
             if np.any(bin_mask):
                 # n_i / n : Proportion d'échantillons dans ce bin
                 bin_weight = np.mean(bin_mask)
-                # Accuracy du bin : moyenne des prédictions correctes du bin != accuracy dans results
-                # qui est la globale
-                bin_acc = np.mean(labels_all[bin_mask] == (preds_all[bin_mask]))
+                # Accuracy du bin : proportion de Vrais Positifs (1) dans ce bin
+                bin_acc = np.mean(labels_all[bin_mask])
                 # Confiance moyenne du bin
                 bin_conf = np.mean(probs_all[bin_mask])
                 # Somme pondérée des écarts

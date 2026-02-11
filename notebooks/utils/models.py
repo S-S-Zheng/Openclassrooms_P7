@@ -44,6 +44,7 @@ class FeatureExtractor(nn.Module):
         super().__init__()
         chosen_model = getattr(models, model_name)
         base_model = chosen_model(weights='DEFAULT' if pretrained else None)
+        self.n_features = base_model.fc.in_features
         
         # Transfer learning: On va faire passer ResNet d'un classifieur à un extracteur de features
         # ==> On garde tout sauf la couche finale (fc la couche de classification)
@@ -136,12 +137,14 @@ class BrainCancerClassifier(nn.Module):
         
         # On définit la tête de classification séparément
         self.fc = nn.Sequential(
-            nn.Flatten(), # Aplati le cube de donnée (comme torch.flatten(x,1)): OBLIGATOIRE
+            nn.Flatten(), # Aplati le cube de donnée (comme torch.flatten(x,1)): OBLIGATOIRE mais
+            # redondant ici car l'extractor aplati deja la donnée mais justeau cas où.
             nn.Linear(
                 self.n_features, 
                 self.n_features//2
             ), # 1ere couche de calcul qui combine # les features : OBLIGATOIRE
-            # BatchNorm normalise sorties du Linear pour aider la convergence: OPTIONNEL
+            # BatchNorm normalise sorties du Linear pour aider la convergence, bien si batch grand
+            # (8 ou 16 est considéré petit): OPTIONNEL
             # nn.BatchNorm1d(self.n_features//2),
             # LayerNorm remplace BatchNorm pour petits jeux (plus stable): OPTIONNEL
             nn.LayerNorm(self.n_features//2),

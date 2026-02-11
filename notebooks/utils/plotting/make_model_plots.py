@@ -234,14 +234,18 @@ def pr_curve(
 def plot_clustering(
     df:pd.DataFrame, 
     reductions:Dict[str,npt.NDArray[Any]],
-    df_labels:str="cluster_"
+    df_labels_prefix: str = "cluster"
     )->Figure:
     """
-    Génère la grille de comparaison en utilisant setup_subplots et itertools.
+    Génère une grille croisant les méthodes de réduction (PCA, t-SNE) et les types de labels 
+    (Réels, Clusters, Pseudo-labels).
     """
     # Préparation des éléments à croiser
     reduction_names = list(reductions.keys()) # ['PCA', 't-SNE']
-    label_cols = ['label'] + [col for col in df.columns if col.startswith(df_labels)]
+    # On recup label et tout ce qui commencer par le prefix
+    label_cols = ['label'] + [
+        col for col in df.columns if col.startswith(df_labels_prefix) and col != 'label'
+    ]
     
     # Toutes les combinaisons (ex: ('PCA', 'label'), ('PCA', 'cluster_kmeans'), ...)
     combinations = list(product(reduction_names, label_cols))
@@ -262,11 +266,13 @@ def plot_clustering(
         sns.scatterplot(
             x=coords[:, 0], 
             y=coords[:, 1], 
-            hue=plot_hue,#df[label_name],
-            style=plot_style if label_name != 'label' else None,#df['label'] if label_name != 'label' else None,
+            hue=plot_hue,
+            style=plot_style if label_name != 'label' else None,
             palette='viridis' if label_name == 'label' else 'tab10',
             ax=ax,
-            alpha=0.7
+            alpha=0.6,
+            edgecolor='w',
+            linewidth=0.5
         )
         
         ax.set_title(f"{reduction_name} - {label_name.replace('_', ' ').title()}")
@@ -351,4 +357,6 @@ def plot_confidence(
     plt.tight_layout()
     if save_path:
         save_figure(title_save,save_path)
+    
+    plt.close(fig)
     return fig

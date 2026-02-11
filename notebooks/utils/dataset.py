@@ -6,6 +6,7 @@ Charger les données, gérer les chemins et appliquer les transformations.
 from pathlib import Path
 # La bibliothèque standard pour ouvrir les fichiers image (.jpg, .png).
 from PIL import Image
+import torch
 # Créer tenseurs rempli de 0
 # from torch import zeros,Tensor
 # Pour créer une structure qui lit images et les envoie par paquets (batches) au GPU.
@@ -59,18 +60,18 @@ class BaseTransform:
         
             - h_flip = kwargs.get('horiz_flip', 0.5)
             - rot = kwargs.get('rotation', 10)
-            - bright = kwargs.get('bright', 0.2)
-            - contrast = kwargs.get('contrast', 0.2)
+            - bright = kwargs.get('bright', 0.4)
+            - contrast = kwargs.get('contrast', 0.4)
             - saturation = kwargs.get('saturation',0.2)
-            - crop = kwargs.get('crop',(0.08,1))
-            - erasing = kwargs.get('erasing',0.5)
+            - crop = kwargs.get('crop',(0.8,1))
+            - erasing = kwargs.get('erasing',0.1)
         
         Args:
             train(bool) :Inclure les augmentation si c'est le train ou pas. défaut: False
             # horiz_flip(float): inclinaison horizontale. défaut = 0.5,
             # rotation(int): Angle de rotation défaut = 10,
-            # brightness(float | tuple[float, float]): luminosité, défaut = 0.2,
-            # contrast(float | tuple[float, float]): contraste, défaut = 0.2,
+            # brightness(float | tuple[float, float]): luminosité, défaut = 0.4,
+            # contrast(float | tuple[float, float]): contraste, défaut = 0.4,
             # saturation(float | tuple[float, float]): saturation, défaut = 0.2,
             strong_augment(bool): Si True, forte augmentation appliqué au jeu train. défaut False
         
@@ -103,7 +104,7 @@ class BaseTransform:
                 bright = kwargs.get('bright', 0.4)
                 contrast = kwargs.get('contrast', 0.4)
                 saturation = kwargs.get('saturation',0.2)
-                crop = kwargs.get('crop',(0.75,1)) # on crop 25% de l'image par défaut
+                crop = kwargs.get('crop',(0.8,1)) # on crop 25% de l'image par défaut
                 
                 
                 tf_list.extend([
@@ -111,7 +112,7 @@ class BaseTransform:
                         brightness=bright,
                         contrast=contrast,
                         saturation=saturation,
-                        hue = 0.1 # variation de teinte légère
+                        # hue = 0.1 # variation de teinte légère
                     ),
                     transforms.RandomResizedCrop(self.size, scale=crop),
                 ])
@@ -159,7 +160,7 @@ class ImagesToDataset(Dataset):
     """
     def __init__(
         self, 
-        file_paths:List[Union[Path, str]], 
+        file_paths:List[Path], 
         labels:Sequence[Union[str,int]], # Sequence est immutable != List qui l'est
         transform:Optional[transforms.Compose]=None
     ):
@@ -186,7 +187,8 @@ class ImagesToDataset(Dataset):
             Tuple (tenseur_image, label, chemin_du_fichier)
         """
         path = self.file_paths[idx]
-        label = float(self.labels[idx]) # On s'assure d'avoir du float32 pour le criterion
+        # label = float(self.labels[idx]) # On s'assure d'avoir du float32 pour le criterion
+        label = torch.tensor(self.labels[idx], dtype=torch.float32)
         
         image = Image.open(path).convert('RGB')
         if self.transform:

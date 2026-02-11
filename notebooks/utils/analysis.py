@@ -133,7 +133,7 @@ class ClusterManager:
             else cluster_model(cluster_name)
         )
         
-        self.df[f"cluster_{reductor_name}_{cluster_name}"]= \
+        self.df[f"{reductor_name}_{cluster_name}"]= \
             cluster.fit_predict(self.reductions[reductor_name])
         
         return self.df
@@ -141,7 +141,7 @@ class ClusterManager:
 
     def evaluate_ari(
         self, 
-        method:str = 'cluster_pca_kmeans'
+        method:str = 'pca_kmeans'
     )->float:
         """
         Calcule l'Adjusted Rand Index (ARI) pour mesurer la concordance 
@@ -152,8 +152,8 @@ class ClusterManager:
         L'ARI varie de -1 à 1 (1 = correspondance parfaite, 0 = hasard).
         
         Args:
-            method(str): methode de clustering a comparer "cluster_nomReducteur_nomCluster"
-                (défaut: cluster_pca_kmeans)
+            method(str): methode de clustering a comparer "nomReducteur_nomCluster"
+                (défaut: pca_kmeans)
         
         Returns:
             ari(float): score ARI
@@ -184,15 +184,15 @@ class ClusterManager:
         Le coeff est compris entre -1 et 1, 1 traduisant un excellent clustering.
         
         Args:
-        #     method(str): methode de clustering a comparer "cluster_nomReducteur_nomCluster"
-        #         (défaut: cluster_pca_kmeans)
+        #     method(str): methode de clustering a comparer "nomReducteur_nomCluster"
+        #         (défaut: pca_kmeans)
             reductor_name(str): Nom de la méthode de réductions
             cluster_name(str): Nom de la méthode de clustering
         
         Returns:
             silhouette(float): score silhouette
         """
-        labels = self.df[f"cluster_{reductor_name}_{cluster_name}"]
+        labels = self.df[f"{reductor_name}_{cluster_name}"]
         data_coords = self.reductions.get(reductor_name)
         if data_coords is None: 
             return -1.0 # pour faire plaisir a Pylance
@@ -209,29 +209,50 @@ class ClusterManager:
         return float(silhouette_score(data_coords[mask], labels[mask]))
 
 
-    # def plot_results(self):
-    #     """Affiche les graphiques PCA et t-SNE colorés par Clusters."""
-    #     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-        
-    #     # PCA - Vrais Labels
-    #     sns.scatterplot(x=self.reductions['PCA'][:,0], y=self.reductions['PCA'][:,1], 
-    #                     hue=self.df['label'], ax=axes[0,0], palette='viridis', style=self.df['label'])
-    #     axes[0,0].set_title("PCA - Vrais Labels (Ground Truth)")
-        
-    #     # PCA - KMeans Clusters
-    #     sns.scatterplot(x=self.reductions['PCA'][:,0], y=self.reductions['PCA'][:,1], 
-    #                     hue=self.df['cluster_kmeans'], ax=axes[0,1], palette='tab10')
-    #     axes[0,1].set_title("PCA - KMeans Clusters")
+    def cluster_pseudo_labels(
+            self, 
+            method: str = "pca_kmeans"
+        ) -> pd.DataFrame:
+            """
+            Assigne un pseudo-label aux données non étiquetées (-1) en se basant sur 
+            le label majoritaire du cluster auquel elles appartiennent.
+            
+            Logique :
+            1. Pour chaque cluster, on regarde les points qui ont un vrai label (0 ou 1).
+            2. On identifie le label majoritaire dans ce cluster.
+            3. On assigne ce label à tous les points '-1' de ce même cluster.
+            
+            Args:
+                method (str): La colonne de clustering à utiliser (ex: 'pca_kmeans').
+                
+            Returns:
+                pd.DataFrame: Le DataFrame avec une nouvelle colonne 'cluster_pseudo_label'.
+            """
+            if method not in self.df.columns:
+                raise KeyError(f"La colonne {method} n'existe pas. Lancez apply_clustering d'abord.")
 
-    #     # t-SNE - Vrais Labels
-    #     sns.scatterplot(x=self.reductions['t-SNE'][:,0], y=self.reductions['t-SNE'][:,1], 
-    #                     hue=self.df['label'], ax=axes[1,0], palette='viridis', style=self.df['label'])
-    #     axes[1,0].set_title("t-SNE - Vrais Labels")
-        
-    #     # t-SNE - DBSCAN
-    #     sns.scatterplot(x=self.reductions['t-SNE'][:,0], y=self.reductions['t-SNE'][:,1], 
-    #                     hue=self.df['cluster_dbscan'], ax=axes[1,1], palette='tab10')
-    #     axes[1,1].set_title("t-SNE - DBSCAN")
-        
-    #     plt.tight_layout()
-    #     plt.show()
+            # Initialisation avec les vrais labels
+            self.df['cluster_pseudo_label'] = self.df['label']
+            
+            # On itère sur chaque cluster identifié par l'algorithme
+            unique_clusters = [c for c in self.df[method].unique() if c != -1] # On ignore le bruit
+            
+            for cluster_id in unique_clusters:
+                # On récupère les lignes du cluster qui ont un vrai label
+                mask_cluster = self.df[method] == cluster_id
+                known_labels_in_cluster = self.df[mask_cluster & (self.df['label'] != -1)]['label']
+                
+                if not known_labels_in_cluster.empty:
+                    # On trouve le label majoritaire (Mode)
+                    majority_label = known_labels_in_cluster.value_counts().idxmax()
+                    
+                    # On assigne ce label aux inconnus de ce cluster uniquement
+                    mask_unlabeled = mask_cluster & (self.df['label'] == -1)
+                    self.df.loc[mask_unlabeled, 'cluster_pseudo_label'] = majority_label
+                    
+                    print(f"Cluster {cluster_id} mappé au Label {majority_label} "
+                        f"({len(known_labels_in_cluster)} refs)")
+                else:
+                    print(f"Cluster {cluster_id} ignoré (aucun label de référence)")
+
+            return self.df

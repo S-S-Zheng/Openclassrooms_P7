@@ -71,7 +71,8 @@ class Trainer:
             'val_recall': [],
             'val_accuracy':[],
             "val_auc":[],
-            "val_pr_auc":[]
+            "val_pr_auc":[],
+            "ece":[]
         }
 
 
@@ -154,7 +155,6 @@ class Trainer:
         # Determinisme, passe le modèle en mode évaluation (fige dropout et batchnorm par exemple)
         self.model.eval()
         probs_all = []
-        # preds_all = []
         labels_all = []
         
         # Gele le modèle car mémorisation inutile et pour économie mémoire
@@ -166,12 +166,8 @@ class Trainer:
                 logits = self.model(images)
                 y_proba = torch.sigmoid(logits) # proba du coup on repasse en sigmoid
                 
-                # # les prdictions
-                # y_preds = (y_proba > 0.5).int().cpu().numpy()
-                
                 # Stockage pour calcul global des métriques sklearn
                 probs_all.extend(y_proba.cpu().numpy().flatten().tolist())
-                # preds_all.extend(y_preds.flatten().tolist())
                 labels_all.extend(labels.numpy().flatten().tolist())
                 
         
@@ -190,9 +186,8 @@ class Trainer:
             "auc": roc_auc_score(labels_all, probs_all),
             "pr_auc": average_precision_score(labels_all, probs_all),
             'raw_data': {
-                'probs': np.array(probs_all),
-                # 'preds': np.array(preds_all),
-                'labels': np.array(labels_all)
+                'probs': probs_all,
+                'labels': labels_all
             }, # Pour ECE et graphiques.
             'ssl_stats': {
                 'precision_at_thresh': float(precision_score(labels_all, preds_thresh, zero_division=0)),
@@ -332,6 +327,7 @@ class Trainer:
                 # Somme pondérée des écarts
                 ece += bin_weight * np.abs(bin_acc - bin_conf)
                 
+        self.history['ece'].append(ece)
         return float(ece)
 
 
@@ -419,8 +415,11 @@ class SslManager:
         
         if is_best:
             best_path = self.ckpt_dir /"best_model.pth"
-            # On ne sauvegarde que les poids pour le best pour gagner de la place
-            torch.save(state.get('state_dict', state), best_path)
+            # On save tout, ATTENTION a ne load dans le model que les poids (state_dict) sinon
+            # pytorch error
+            # plutot orienté prod que dev
+            # torch.save(state.get('state_dict', state), best_path)
+            torch.save(state, best_path)
     
     
     def save_weak_labels(self, paths: list, labels: list):

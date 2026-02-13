@@ -287,9 +287,89 @@ def plot_clustering(
 # ===========================================================================
 
 
+# def plot_confidence(
+#     probas:npt.NDArray[Any],
+#     threshold_range:Optional[npt.NDArray[Any]]=None,
+#     save_path: Optional[Path]=Path.cwd(),
+#     title_save:str="plot_probas",
+#     stats:bool=False,
+# )->Figure:
+#     """
+#     Plot un histogramme de la distibution de probabilité de classe par le modèle.\n
+    
+#     3 traits en pointillé servent de référence:
+#         - le trait ROUGE pour le seuil standard (0.5)
+#         - le trait VERT pour le seuil supérieur (initial) de l'entrainement
+#         - le trait ORANGE pour le seuil inférieur (final) de l'entrainement
+    
+#     On a la proba en abscisse et le nombre d'image en ordonné.
+    
+    
+#     :param probas: Le tableau des probabilités
+#     :type probas: npt.NDArray[Any]
+#     :param threshold_range: l'intervalle du threshold utilisé (decay). Défaut None
+#     :type threshold_range: Optional[npt.NDArray[Any]]
+#     :param save_path: Le chemin de sauvegarde de la figure. Par défaut dossier courant
+#     :type save_path: Optional[Path]
+#     :param title_save: le nom de la figure. par défaut plot_probas
+#     :type title_save: str
+#     :param stats: L'affichage ou non d'un résumé statistique. Par défaut False
+#     :type stats: bool
+#     :return: la figure
+#     :rtype: Figure
+#     """
+    
+#     # Config ed la figure
+#     fig, ax = plt.subplots(figsize=(10, 8))
+    
+#     # Visualisation
+#     ax.hist(probas, bins=50, color='skyblue', edgecolor='black', alpha=0.7)
+#     ax.axvline(x=0.5, color='red', linestyle='--', label='Frontière de décision (0.5)')
+    
+#     max_thresh = max(threshold_range) # type:ignore
+#     oppose_thresh = round(1-max_thresh,4)
+#     # Affichage des seuils
+#     if threshold_range is not None and len(threshold_range) > 0:
+#         ax.axvline(
+#             x=max_thresh, 
+#             color='green', 
+#             linestyle=':', 
+#             label=f'Seuil initial ({max_thresh})'
+#         )
+#         ax.axvline(
+#             x=min(threshold_range), 
+#             color='orange', 
+#             linestyle=':', 
+#             label=f'Seuil final ({min(threshold_range)})'
+#         )
+    
+#     ax.set_title("Distribution des scores de confiance sur le jeu inconnu")
+#     ax.set_xlabel("Probabilité prédite (0 = Sain, 1 = Cancer)")
+#     ax.set_ylabel("Nombre d'images")
+#     ax.legend()
+    
+#     # Statistiques
+#     if stats:
+#         print(f"--- Statistiques des scores avec threshold : {max_thresh} ---")
+#         print(f"Médiane : {np.median(probas):.4f}")
+#         print(f"Moyenne : {np.mean(probas):.4f}")
+#         print(f"Classe incertaine (0.4 - 0.6) : {np.sum((probas > 0.4) & (probas < 0.6))}")
+#         print(f"Cancer potentiel (0.6 - {max_thresh})" 
+#             f": {np.sum((probas >= 0.6) & (probas <= max_thresh))}")
+#         print(f"Sain potentiel ({oppose_thresh} - 0.4)" 
+#             f": {np.sum((probas >= oppose_thresh) & (probas <= 0.4))}") 
+#         print(f"Nb de cancer ({max_thresh})  : {np.sum(probas > max_thresh)}") 
+#         print(f"Nb de sain ({oppose_thresh})  : {np.sum(probas < oppose_thresh)}")
+        
+#     plt.tight_layout()
+#     if save_path:
+#         save_figure(title_save,save_path)
+    
+#     plt.close(fig)
+#     return fig
 def plot_confidence(
     probas:npt.NDArray[Any],
-    threshold_range:Optional[npt.NDArray[Any]]=None,
+    threshold:Any=None,
     save_path: Optional[Path]=Path.cwd(),
     title_save:str="plot_probas",
     stats:bool=False,
@@ -297,18 +377,17 @@ def plot_confidence(
     """
     Plot un histogramme de la distibution de probabilité de classe par le modèle.\n
     
-    3 traits en pointillé servent de référence:
+    2 traits en pointillé servent de référence:
         - le trait ROUGE pour le seuil standard (0.5)
-        - le trait VERT pour le seuil supérieur (initial) de l'entrainement
-        - le trait ORANGE pour le seuil inférieur (final) de l'entrainement
+        - le trait VERT pour le seuil optimisé de l'entrainement
     
     On a la proba en abscisse et le nombre d'image en ordonné.
     
     
     :param probas: Le tableau des probabilités
     :type probas: npt.NDArray[Any]
-    :param threshold_range: l'intervalle du threshold utilisé (decay). Défaut None
-    :type threshold_range: Optional[npt.NDArray[Any]]
+    :param threshold: threshold utilisé (decay). Défaut None
+    :type threshold: Any
     :param save_path: Le chemin de sauvegarde de la figure. Par défaut dossier courant
     :type save_path: Optional[Path]
     :param title_save: le nom de la figure. par défaut plot_probas
@@ -326,21 +405,14 @@ def plot_confidence(
     ax.hist(probas, bins=50, color='skyblue', edgecolor='black', alpha=0.7)
     ax.axvline(x=0.5, color='red', linestyle='--', label='Frontière de décision (0.5)')
     
-    max_thresh = max(threshold_range) # type:ignore
-    oppose_thresh = round(1-max_thresh,4)
+    oppose_thresh = round(1-threshold,4)
     # Affichage des seuils
-    if threshold_range is not None and len(threshold_range) > 0:
+    if threshold is not None:
         ax.axvline(
-            x=max_thresh, 
+            x=threshold, 
             color='green', 
             linestyle=':', 
-            label=f'Seuil initial ({max_thresh})'
-        )
-        ax.axvline(
-            x=min(threshold_range), 
-            color='orange', 
-            linestyle=':', 
-            label=f'Seuil final ({min(threshold_range)})'
+            label=f'Seuil ({threshold})'
         )
     
     ax.set_title("Distribution des scores de confiance sur le jeu inconnu")
@@ -350,15 +422,15 @@ def plot_confidence(
     
     # Statistiques
     if stats:
-        print(f"--- Statistiques des scores ---")
+        print(f"--- Statistiques des scores avec threshold : {threshold} ---")
         print(f"Médiane : {np.median(probas):.4f}")
         print(f"Moyenne : {np.mean(probas):.4f}")
         print(f"Classe incertaine (0.4 - 0.6) : {np.sum((probas > 0.4) & (probas < 0.6))}")
-        print(f"Cancer potentiel (0.6 - {max_thresh})" 
-            f": {np.sum((probas >= 0.6) & (probas <= max_thresh))}")
+        print(f"Cancer potentiel (0.6 - {threshold})" 
+            f": {np.sum((probas >= 0.6) & (probas <= threshold))}")
         print(f"Sain potentiel ({oppose_thresh} - 0.4)" 
-            f": {np.sum((probas >= oppose_thresh) & (probas <= 4))}") 
-        print(f"Nb de cancer ({max_thresh})  : {np.sum(probas > max_thresh)}") 
+            f": {np.sum((probas >= oppose_thresh) & (probas <= 0.4))}") 
+        print(f"Nb de cancer ({threshold})  : {np.sum(probas > threshold)}") 
         print(f"Nb de sain ({oppose_thresh})  : {np.sum(probas < oppose_thresh)}")
         
     plt.tight_layout()

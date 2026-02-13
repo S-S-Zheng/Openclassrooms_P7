@@ -85,3 +85,33 @@ def combinaisonAB(a:Any,b:Any)->Any:
         Any
     """
     return product(a,b)
+
+
+# ===========================================================================
+
+
+def get_score(
+    f2:float, 
+    ece:float, 
+    pr_auc:float,
+    mode:Optional[Literal['ssl','supervised','cluster']]="ssl"
+):
+    """
+    scoring suivant f2,PR AUC et ECE. 
+
+    Args:
+        f2(float): f2
+        ece(float): ece
+        pr_auc(float): pr auc
+        mode(Optional[Literal['ssl','supervised','cluster']]): le mode de scoring, 
+            en ssl on est strict sur l'ECE et sinon on privilégie F2. défaut ssl.
+            (Les poids restent arbitraires mais ne pas oublier que les metriques fluctue diff)
+
+    Returns:
+        _type_: score
+    """
+    if mode == "ssl":
+        score = (f2 * 0.6 + pr_auc * 0.4) - (0.75 * ece)
+    else:
+        score = (f2 * 0.75 + pr_auc * 0.25) - (0.25 * ece)
+    return score

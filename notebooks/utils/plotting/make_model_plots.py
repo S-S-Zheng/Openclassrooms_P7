@@ -275,7 +275,7 @@ def plot_clustering(
             linewidth=0.5
         )
         
-        ax.set_title(f"{reduction_name} - {label_name.replace('_', ' ').title()}")
+        ax.set_title(f"{reduction_name} - {label_name.lower().replace(df_labels_prefix, ' ').title()}")
         ax.set_xlabel("x")
         ax.set_ylabel("y")
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
@@ -326,13 +326,15 @@ def plot_confidence(
     ax.hist(probas, bins=50, color='skyblue', edgecolor='black', alpha=0.7)
     ax.axvline(x=0.5, color='red', linestyle='--', label='Frontière de décision (0.5)')
     
+    max_thresh = max(threshold_range) # type:ignore
+    oppose_thresh = round(1-max_thresh,4)
     # Affichage des seuils
     if threshold_range is not None and len(threshold_range) > 0:
         ax.axvline(
-            x=max(threshold_range), 
+            x=max_thresh, 
             color='green', 
             linestyle=':', 
-            label=f'Seuil initial ({max(threshold_range)})'
+            label=f'Seuil initial ({max_thresh})'
         )
         ax.axvline(
             x=min(threshold_range), 
@@ -351,8 +353,13 @@ def plot_confidence(
         print(f"--- Statistiques des scores ---")
         print(f"Médiane : {np.median(probas):.4f}")
         print(f"Moyenne : {np.mean(probas):.4f}")
-        print(f"Images entre 0.4 et 0.6 (incertaines) : {np.sum((probas > 0.4) & (probas < 0.6))}")
-        print(f"Images > 0.95 (très sûres) : {np.sum(probas > 0.95)}")
+        print(f"Classe incertaine (0.4 - 0.6) : {np.sum((probas > 0.4) & (probas < 0.6))}")
+        print(f"Cancer potentiel (0.6 - {max_thresh})" 
+            f": {np.sum((probas >= 0.6) & (probas <= max_thresh))}")
+        print(f"Sain potentiel ({oppose_thresh} - 0.4)" 
+            f": {np.sum((probas >= oppose_thresh) & (probas <= 4))}") 
+        print(f"Nb de cancer ({max_thresh})  : {np.sum(probas > max_thresh)}") 
+        print(f"Nb de sain ({oppose_thresh})  : {np.sum(probas < oppose_thresh)}")
         
     plt.tight_layout()
     if save_path:

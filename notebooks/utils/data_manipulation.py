@@ -4,8 +4,9 @@ import joblib
 import json
 from pathlib import Path
 from itertools import product
-from typing import Any,Literal,Optional
+from typing import Any,Literal,Optional,List
 import yaml
+import gc
 
 # ===========================================================================
 
@@ -111,7 +112,24 @@ def get_score(
         _type_: score
     """
     if mode == "ssl":
-        score = (f2 * 0.6 + pr_auc * 0.4) - (0.75 * ece)
+        score = (f2 * 0.75 + pr_auc * 0.25) - (0.75 * ece)
     else:
         score = (f2 * 0.75 + pr_auc * 0.25) - (0.25 * ece)
     return score
+
+
+# =======================================================================
+
+def clean_var(var:List[str]|str)->None:
+    """
+    Applique del sur les noms des variables indiquées
+    """
+    
+    if len(var)>1:
+        for i in var:
+            if i in locals():
+                del locals()[i]
+            if i in globals():
+                del globals()[i]
+    else:
+        del var

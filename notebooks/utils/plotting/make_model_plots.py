@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 # from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 # import numpy as np
-from typing import List, Literal, Any, Optional,Tuple, Dict
+from typing import List, Literal, Any, Optional,Tuple, Dict,Union
 import numpy.typing as npt
 from pathlib import Path
 from itertools import product
@@ -433,6 +433,53 @@ def plot_confidence(
         print(f"Nb de cancer ({threshold})  : {np.sum(probas > threshold)}") 
         print(f"Nb de sain ({oppose_thresh})  : {np.sum(probas < oppose_thresh)}")
         
+    plt.tight_layout()
+    if save_path:
+        save_figure(title_save,save_path)
+    
+    plt.close(fig)
+    return fig
+
+
+# ===========================================================================
+
+
+def plot_confusion_matrix(
+    cm_dict: Dict[str, Union[float, int]],
+    save_path: Optional[Path] = Path.cwd(),
+    title_save: str = "plot_confusion_matrix",
+) -> Figure:
+    """
+    Génère la matric de confusion
+
+    Args:
+        cm_dict (dict): Dictionnaire de la matric de conf
+        save_path (Optional[Path], optional): _description_. Defaults to Path.cwd().
+        title_save (str, optional): _description_. Defaults to "plot_confusion_matrix".
+
+    Returns:
+        Figure: _description_
+    """
+    fig, ax = plt.subplots(figsize=(8, 6))
+    
+    matrix = [[cm_dict['tn'], cm_dict['fp']], 
+              [cm_dict['fn'], cm_dict['tp']]]
+    
+    # Ajout des labels
+    sns.heatmap(
+        matrix, 
+        annot=True, 
+        fmt='d', 
+        cmap='Blues', 
+        ax=ax,
+        xticklabels=['Prédit Sain', 'Prédit Cancer'],
+        yticklabels=['Réel Sain', 'Réel Cancer']
+    )
+    
+    ax.set_title(f"Matrice de Confusion - {title_save}")
+    ax.set_ylabel('Vérité Terrain')
+    ax.set_xlabel('Prédictions Modèle')
+    
     plt.tight_layout()
     if save_path:
         save_figure(title_save,save_path)

@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 
 from sklearn.metrics import (
     precision_score,recall_score,fbeta_score, 
-    accuracy_score, roc_auc_score, average_precision_score
+    accuracy_score, roc_auc_score, average_precision_score,confusion_matrix
 )
 
 from typing import Dict,List, Tuple,Any, Optional
@@ -177,6 +177,11 @@ class Trainer:
         preds_05 = (probs_all > 0.5).astype(int)
         # prediction au seuil customisé (pour opt threshold comme SSL)
         preds_thresh = (probs_all > self.threshold).astype(int)
+        # Calcul de la matrice de confusion (au seuil 0.5 par défaut)
+        # try:
+        #     cm= confusion_matrix(labels_all, preds_05,labels=[0,1])
+        # except:
+        tn, fp, fn, tp = confusion_matrix(labels_all, preds_05).ravel()
         
         results = {
             'f2': float(fbeta_score(labels_all, preds_05, beta=2, zero_division=0)),
@@ -185,6 +190,10 @@ class Trainer:
             "accuracy": accuracy_score(labels_all, preds_05),
             "auc": roc_auc_score(labels_all, probs_all),
             "pr_auc": average_precision_score(labels_all, probs_all),
+            'confusion_matrix': {
+                'tn': int(tn), 'fp': int(fp), 
+                'fn': int(fn), 'tp': int(tp)
+            },
             'raw_data': {
                 'probs': probs_all,
                 'labels': labels_all
@@ -197,7 +206,7 @@ class Trainer:
         
         # MAJ de l'historique
         for key,value in results.items():
-            if key != 'raw_data' and key != 'ssl_stats':
+            if key != 'raw_data' and key != 'ssl_stats' and key != 'confusion_matrix':
                 self.history[f'val_{key}'].append(value)
         return results
 
@@ -264,7 +273,7 @@ class Trainer:
     def calculate_ece(
         self, 
         dataloader: Dict[str,np.ndarray]|DataLoader, 
-        n_bins: int = 15
+        n_bins: int = 3
     ) -> float:
         """
         Calcule l'Expected Calibration Error qui mesure l'ecart entre la confiance du mdèle et
